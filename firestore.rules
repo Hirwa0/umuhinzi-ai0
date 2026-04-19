@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isVerifiedUser() { return isSignedIn() && request.auth.token.email_verified == true; }
+
+    // --- Validation Blueprints ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.displayName is string && data.displayName.size() <= 100
+        && (data.get('email', '') == '' || (data.email is string && data.email.size() <= 100))
+        && data.createdAt is string
+        && (data.get('language', '') == '' || data.language is string)
+        && (data.get('theme', '') == '' || data.theme is string)
+        && (data.get('notificationsEnabled', true) is bool);
+    }
+
+    function isValidChatSession(data) {
+      return data.keys().hasAll(['userId', 'title', 'lastMessage', 'createdAt', 'updatedAt'])
+        && data.userId == request.auth.uid
+        && data.title is string && data.title.size() <= 200;
+    }
+
+    // --- Collection Routes ---
+
+    // Connection check
+    match /_system_/{docId} {
+      allow get: if true;
+    }
+
+    // NOTIFICATIONS
+    match /notifications/{notificationId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // SETTINGS
+    match /settings/{settingId} {
+      allow read: if true;
+    }
+
+    // USERS
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow create, update: if isOwner(userId) && isValidUser(incoming());
+      
+      match /sessions/{sessionId} {
+        allow read, write: if isOwner(userId);
+        match /messages/{messageId} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+    }
+
+    // POSTS
+    match /posts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn(); 
+      allow delete: if isSignedIn();
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+      }
+    }
+
+    // ROOMS
+    match /rooms/{roomId} {
+      allow read, write: if isSignedIn(); 
+      match /messages/{messageId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+  }
+}
